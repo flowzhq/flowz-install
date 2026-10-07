@@ -46,8 +46,8 @@ $platform = "windows-$arch"
 if ($arch -eq 'arm64') {
   Write-Warning @"
 Windows on ARM: this build ships WITHOUT the embedded analyzer, because Bun has
-no windows-arm64 compile target (ADR-029). 'flowz scan', 'config' and 'view'
-work; 'flowz run' will not. Use an amd64 machine or WSL for the full pipeline.
+no windows-arm64 compile target (ADR-029). 'flowz scan', 'init' and 'view'
+work; 'flowz system build' will not. Use an amd64 machine or WSL for the full pipeline.
 "@
 }
 
