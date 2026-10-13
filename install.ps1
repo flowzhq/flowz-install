@@ -1,7 +1,6 @@
-# Flowz CLI installer for Windows (ADR-032).
-#
-#   $env:FLOWZ_TOKEN = "<your token>"
-#   irm https://raw.githubusercontent.com/flowzhq/flowz-install/main/install.ps1 | iex
+# Flowz CLI installer for Windows (ADR-032). The install command is in
+# docs/partner-install.md. Keep it out of this file: antivirus AMSI scans
+# (Bitdefender) block a script that carries a URL piped to iex, comment or not.
 #
 # Downloads the flowz build for this machine from the private registry, verifies
 # its sha256 against the published release metadata, and installs it to
@@ -36,6 +35,7 @@ $package = if ($env:FLOWZ_CLI_PACKAGE) { $env:FLOWZ_CLI_PACKAGE } else { 'ghcr.i
 $registry = $package.Split('/')[0]
 $repository = $package.Substring($registry.Length + 1)
 $installDir = if ($env:FLOWZ_INSTALL_DIR) { $env:FLOWZ_INSTALL_DIR } else { Join-Path $HOME '.flowz\bin' }
+$installDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($installDir)
 $scheme = if ($registry -match '^(localhost|127\.0\.0\.1)(:|$)') { 'http' } else { 'https' }
 
 function Get-Arch {
@@ -54,15 +54,51 @@ work; 'flowz system build' will not. Use an amd64 machine or WSL for the full pi
 "@
 }
 
+# A PATH entry matches with or without a trailing separator.
+function Test-OnPath($pathList) {
+  $want = $installDir.TrimEnd('\', '/')
+  @(("$pathList" -split ';') | ForEach-Object { $_.Trim().TrimEnd('\', '/') }) -contains $want
+}
+
 function Write-PathHint {
-  if (($env:PATH -split ';') -notcontains $installDir) {
+  if (-not (Test-OnPath $env:PATH)) {
+    $q = $installDir -replace "'", "''"
     Write-Host ""
-    Write-Host "$installDir is not on your PATH. Add it for this user:"
-    Write-Host "  [Environment]::SetEnvironmentVariable('PATH', `"`$env:PATH;$installDir`", 'User')"
-    Write-Host "  `$env:PATH += ';$installDir'"
+    if (Test-OnPath ([Environment]::GetEnvironmentVariable('PATH', 'User'))) {
+      Write-Host "$installDir is on your user PATH but not in this session. Open a new terminal, or:"
+    } else {
+      Write-Host "$installDir is not on your PATH. Add it for this user:"
+      Write-Host "  [Environment]::SetEnvironmentVariable('PATH', ([Environment]::GetEnvironmentVariable('PATH', 'User') + ';$q').TrimStart(';'), 'User')"
+    }
+    Write-Host "  `$env:PATH += ';$q'"
     Write-Host ""
   }
   Write-Host "Then run: flowz version"
+}
+
+# Replace flowz.exe with $src. Windows refuses while flowz.exe runs (flowz view,
+# flowz studio) or a scanner holds it: retry briefly, then fail with the binary
+# unchanged. The caller removes $src.
+function Install-Binary($src) {
+  $dst = Join-Path $installDir 'flowz.exe'
+  for ($try = 1; ; $try++) {
+    try { Move-Item -Force -LiteralPath $src -Destination $dst -ErrorAction Stop; return }
+    catch {
+      if ($try -ge 5) {
+        $why = $_.Exception.Message
+        $left = if (Test-Path -LiteralPath $dst) { 'The installed flowz is unchanged.' } else { 'Nothing is installed now.' }
+        # Only a flowz.exe that cannot be opened for writing is in use; any
+        # other failure (access denied to the folder, full disk) says so plainly.
+        $busy = $false
+        if (Test-Path -LiteralPath $dst) {
+          try { [IO.File]::Open($dst, 'Open', 'Write', 'None').Dispose() } catch [IO.IOException] { $busy = $true } catch { }
+        }
+        if ($busy) { Die "could not replace $dst ($why)`nflowz.exe is in use - stop ``flowz view`` / ``flowz studio`` and rerun. $left" }
+        Die "could not replace $dst ($why). $left"
+      }
+      Start-Sleep -Seconds 1
+    }
+  }
 }
 
 # --- local mode ---------------------------------------------------------------
@@ -120,7 +156,7 @@ if ($localBin) {
     if ($got -ne $want) {
       Die "checksum mismatch for $binName`n  got:      $got`n  expected: $want`nThe file was corrupted or changed after SHA256SUMS was made. Nothing was installed."
     }
-    Move-Item -Force -LiteralPath $staged -Destination (Join-Path $installDir 'flowz.exe')
+    Install-Binary $staged
   } finally {
     Remove-Item -Force -LiteralPath $staged -ErrorAction SilentlyContinue
   }
@@ -196,8 +232,12 @@ try {
   if (-not $binDigest) { Die "$package`:$version-$platform not found" }
 
   $gzPath = Join-Path $tmp 'flowz.gz'
-  Invoke-WebRequest -Headers $authHeader -OutFile $gzPath `
-    -Uri "${scheme}://$registry/v2/$repository/blobs/$binDigest"
+  # Windows PowerShell's progress bar slows this download about tenfold.
+  $progress = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+  try {
+    Invoke-WebRequest -Headers $authHeader -OutFile $gzPath `
+      -Uri "${scheme}://$registry/v2/$repository/blobs/$binDigest"
+  } finally { $ProgressPreference = $progress }
 
   $exePath = Join-Path $tmp 'flowz.exe'
   $in = [IO.File]::OpenRead($gzPath)
@@ -212,7 +252,7 @@ try {
 
   # Move into place last, so a failure above never leaves a partial binary on PATH.
   New-Item -ItemType Directory -Force -Path $installDir | Out-Null
-  Move-Item -Force $exePath (Join-Path $installDir 'flowz.exe')
+  Install-Binary $exePath
 
   # Store the token so `flowz upgrade` works without re-supplying it. The CLI
   # always reads ~\.flowz\credentials.json regardless of where the binary lives.
