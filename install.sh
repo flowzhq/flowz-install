@@ -42,6 +42,9 @@ case "$REGISTRY" in localhost:*|127.0.0.1:*|localhost|127.0.0.1) SCHEME=http ;; 
 die() { echo "error: $*" >&2; exit 1; }
 info() { echo "$*" >&2; }
 
+# mv onto a directory named flowz moves the binary inside it and succeeds.
+[ ! -d "$INSTALL_DIR/flowz" ] || die "$INSTALL_DIR/flowz is a directory, not the flowz binary. Move or delete it and rerun. Nothing was installed."
+
 sha256_of() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
   elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | cut -d' ' -f1

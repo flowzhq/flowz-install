@@ -38,6 +38,12 @@ $installDir = if ($env:FLOWZ_INSTALL_DIR) { $env:FLOWZ_INSTALL_DIR } else { Join
 $installDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($installDir)
 $scheme = if ($registry -match '^(localhost|127\.0\.0\.1)(:|$)') { 'http' } else { 'https' }
 
+# Move-Item onto a directory named flowz.exe moves the binary inside it and succeeds.
+$target = Join-Path $installDir 'flowz.exe'
+if (Test-Path -LiteralPath $target -PathType Container) {
+  Die "$target is a directory, not the flowz binary. Move or delete it and rerun. Nothing was installed."
+}
+
 function Get-Arch {
   switch ($env:PROCESSOR_ARCHITECTURE) {
     'AMD64' { 'amd64' }
