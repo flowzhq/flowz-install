@@ -82,14 +82,55 @@ function Write-PathHint {
   Write-Host "Then run: flowz version"
 }
 
+# An antivirus fails every open of a file it flags, or removes the file. 2:
+# Windows names a virus (Microsoft Defender: ERROR_VIRUS_INFECTED or
+# ERROR_VIRUS_DELETED). 1, most likely an antivirus: access denied on a file
+# this script just wrote (-Ours; Bitdefender's form), or $path gone. 0: neither.
+# The HResult is checked, not the message, which Windows localizes.
+function Get-AvBlock($err, $path, [switch]$Ours) {
+  $denied = $false
+  for ($e = $err.Exception; $e; $e = $e.InnerException) {
+    if ($e.HResult -in @(-2147024671, -2147024670)) { return 2 } # 0x800700E1, 0x800700E2
+    if ($Ours -and $e.HResult -eq -2147024891) { $denied = $true } # 0x80070005
+  }
+  if ($denied -or ($path -and -not (Test-Path -LiteralPath $path))) { return 1 }
+  0
+}
+
+$avHint = 'The antivirus history names the detection (Microsoft Defender: Windows Security > Protection history). Send that name to your Flowz contact, or ask your IT team to allow the file, then rerun.'
+
+function Stop-AvBlock($name, $level, $err, $left = 'Nothing was installed.') {
+  $who = if ($level -ge 2) { 'your antivirus blocked' } else { 'your antivirus most likely blocked' }
+  Die "$who $name ($($err.Exception.Message)). $left`n$avHint"
+}
+
+# The sha256 of a file this script just wrote. Get-FileHash would report an
+# antivirus block as a read error without its HResult.
+function Get-Sha256($path, $name) {
+  try {
+    $s = [IO.File]::OpenRead($path)
+    try { $h = [Security.Cryptography.SHA256]::Create().ComputeHash($s) } finally { $s.Dispose() }
+  } catch {
+    $av = Get-AvBlock $_ $path -Ours
+    if ($av) { Stop-AvBlock $name $av $_ }
+    throw
+  }
+  -join ($h | ForEach-Object { $_.ToString('x2') })
+}
+
 # Replace flowz.exe with $src. Windows refuses while flowz.exe runs (flowz view,
 # flowz studio) or a scanner holds it: retry briefly, then fail with the binary
 # unchanged. The caller removes $src.
-function Install-Binary($src) {
+function Install-Binary($src, $name) {
   $dst = Join-Path $installDir 'flowz.exe'
   for ($try = 1; ; $try++) {
     try { Move-Item -Force -LiteralPath $src -Destination $dst -ErrorAction Stop; return }
     catch {
+      $av = Get-AvBlock $_ $src
+      if ($av) {
+        $left = if (Test-Path -LiteralPath $dst) { 'Nothing was installed; the installed flowz is unchanged.' } else { 'Nothing is installed now.' }
+        Stop-AvBlock $name $av $_ $left
+      }
       if ($try -ge 5) {
         $why = $_.Exception.Message
         $left = if (Test-Path -LiteralPath $dst) { 'The installed flowz is unchanged.' } else { 'Nothing is installed now.' }
@@ -128,7 +169,18 @@ if (-not $localBin -and $env:FLOWZ_LOCAL -ne '0' -and $selfDir -and
     Die "several flowz_*_windows_$a.exe binaries are beside this script: $(($found | ForEach-Object Name) -join ', ')`nKeep one, or name it: `$env:FLOWZ_BINARY = '<path>'"
   } elseif ($found.Count -eq 1) { $localBin = $found[0].FullName }
   elseif (Test-Path -LiteralPath (Join-Path $selfDir 'flowz.exe') -PathType Leaf) { $localBin = Join-Path $selfDir 'flowz.exe' }
-  elseif ($localWanted) { Die "-Local but no flowz_*_windows_$a.exe or flowz.exe is beside $selfDir" }
+  else {
+    # An antivirus removes a binary it flags as the bundle is unpacked; its SHA256SUMS line stays.
+    $sums = Join-Path $selfDir 'SHA256SUMS'
+    if (Test-Path -LiteralPath $sums -PathType Leaf) {
+      foreach ($line in Get-Content -LiteralPath $sums) {
+        if ($line -match "^[0-9a-fA-F]{64}\s+\*?(flowz_\S+_windows_$a\.exe|flowz\.exe)\s*$") {
+          Die "SHA256SUMS lists $($Matches[1]), but it is not beside this script: your antivirus most likely removed it. Nothing was installed.`n$avHint"
+        }
+      }
+    }
+    if ($localWanted) { Die "-Local but no flowz_*_windows_$a.exe or flowz.exe is beside $selfDir" }
+  }
 } elseif (-not $localBin -and $localWanted) {
   Die "-Local needs the installer run as a file beside the binary (powershell -File .\install.ps1), or `$env:FLOWZ_BINARY = '<path>'"
 }
@@ -157,12 +209,13 @@ if ($localBin) {
   # Verify the copy, not the source: nothing can swap the file between check and install.
   $staged = Join-Path $installDir ".flowz.install.$PID.exe"
   try {
-    Copy-Item -LiteralPath $localBin -Destination $staged -Force
-    $got = (Get-FileHash -Algorithm SHA256 -LiteralPath $staged).Hash.ToLower()
+    try { Copy-Item -LiteralPath $localBin -Destination $staged -Force }
+    catch { $av = Get-AvBlock $_ $localBin; if ($av) { Stop-AvBlock $binName $av $_ }; throw }
+    $got = Get-Sha256 $staged $binName
     if ($got -ne $want) {
       Die "checksum mismatch for $binName`n  got:      $got`n  expected: $want`nThe file was corrupted or changed after SHA256SUMS was made. Nothing was installed."
     }
-    Install-Binary $staged
+    Install-Binary $staged $binName
   } finally {
     Remove-Item -Force -LiteralPath $staged -ErrorAction SilentlyContinue
   }
@@ -237,28 +290,37 @@ try {
   $binDigest = Get-LayerDigest "$version-$platform"
   if (-not $binDigest) { Die "$package`:$version-$platform not found" }
 
+  $name = "flowz $version"
   $gzPath = Join-Path $tmp 'flowz.gz'
   # Windows PowerShell's progress bar slows this download about tenfold.
   $progress = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
   try {
     Invoke-WebRequest -Headers $authHeader -OutFile $gzPath `
       -Uri "${scheme}://$registry/v2/$repository/blobs/$binDigest"
-  } finally { $ProgressPreference = $progress }
+  } catch { $av = Get-AvBlock $_ -Ours; if ($av) { Stop-AvBlock $name $av $_ }; throw } finally { $ProgressPreference = $progress }
 
   $exePath = Join-Path $tmp 'flowz.exe'
-  $in = [IO.File]::OpenRead($gzPath)
-  $gz = New-Object IO.Compression.GzipStream($in, [IO.Compression.CompressionMode]::Decompress)
-  $out = [IO.File]::Create($exePath)
-  try { $gz.CopyTo($out) } finally { $out.Dispose(); $gz.Dispose(); $in.Dispose() }
+  $created = $false
+  try {
+    $in = [IO.File]::OpenRead($gzPath)
+    $gz = New-Object IO.Compression.GzipStream($in, [IO.Compression.CompressionMode]::Decompress)
+    $out = [IO.File]::Create($exePath); $created = $true
+    try { $gz.CopyTo($out) } finally { $out.Dispose(); $gz.Dispose(); $in.Dispose() }
+  } catch {
+    $av = Get-AvBlock $_ $gzPath -Ours
+    if (-not $av -and $created) { $av = Get-AvBlock $_ $exePath -Ours }
+    if ($av) { Stop-AvBlock $name $av $_ }
+    throw
+  }
 
-  $got = (Get-FileHash -Algorithm SHA256 -Path $exePath).Hash.ToLower()
+  $got = Get-Sha256 $exePath $name
   if ($got -ne $entry.sha256.ToLower()) {
     Die "checksum mismatch for $version $platform`n  got:      $got`n  expected: $($entry.sha256)`nThe download was corrupted or tampered with. Nothing was installed."
   }
 
   # Move into place last, so a failure above never leaves a partial binary on PATH.
   New-Item -ItemType Directory -Force -Path $installDir | Out-Null
-  Install-Binary $exePath
+  Install-Binary $exePath $name
 
   # Store the token so `flowz upgrade` works without re-supplying it. The CLI
   # always reads ~\.flowz\credentials.json regardless of where the binary lives.
