@@ -34,6 +34,13 @@ This installs `flowz` to `~/.flowz/bin` and stores your token so that
 | `FLOWZ_VERSION` | install an exact version (e.g. `v1.2.3`) instead of the latest |
 | `FLOWZ_INSTALL_DIR` | install somewhere other than `~/.flowz/bin` |
 
+## Install a registry server
+
+A model registry server installs with the same installer: install the CLI as
+above, then run `flowz setup server`. It pulls the registry image with your
+access token, or loads it from the offline zip with `--images`. See the
+manual's "Run a model registry" guide (`flowz docs`).
+
 ## Updating
 
 Once installed, the CLI updates itself:
