@@ -51,7 +51,7 @@ flowz upgrade
 
 ## Don't have a token?
 
-Flowz is in a private design-partner programme. Get in touch at
+Flowz is in a private design-partner program. Get in touch at
 [codeflowz.ai](https://codeflowz.ai).
 
 ---
