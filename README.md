@@ -37,7 +37,7 @@ This installs `flowz` to `~/.flowz/bin` and stores your token so that
 ## Install a registry server
 
 A model registry server installs with the same installer: install the CLI as
-above, then run `flowz setup server`. It pulls the registry image with your
+above, then run `flowz registry install`. It pulls the registry image with your
 access token, or loads it from the offline zip with `--images`. See the
 manual's "Run a model registry" guide (`flowz docs`).
 
