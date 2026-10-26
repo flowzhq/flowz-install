@@ -324,11 +324,24 @@ try {
 
   # Store the token so `flowz upgrade` works without re-supplying it. The CLI
   # always reads ~\.flowz\credentials.json regardless of where the binary lives.
+  # An existing file may hold more (model registry tokens and CAs, flowz's
+  # Claude sign-in): the new binary replaces only the token there.
   $flowzHome = Join-Path $HOME '.flowz'
   New-Item -ItemType Directory -Force -Path $flowzHome | Out-Null
-  [IO.File]::WriteAllText(
-    (Join-Path $flowzHome 'credentials.json'),
-    (@{ registry = $package; token = $env:FLOWZ_TOKEN } | ConvertTo-Json))
+  $cred = Join-Path $flowzHome 'credentials.json'
+  if ((Test-Path -LiteralPath $cred -PathType Leaf) -and (Get-Item -LiteralPath $cred).Length -gt 0) {
+    # Continue, not Stop: Windows PowerShell turns a native command's stderr
+    # line into a terminating error under Stop.
+    $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { $loginOut = $env:FLOWZ_TOKEN | & (Join-Path $installDir 'flowz.exe') login downloads --yes 2>&1; $loginRc = $LASTEXITCODE }
+    finally { $ErrorActionPreference = $eap }
+    if ($loginRc -ne 0) {
+      Write-Host ($loginOut | Out-String)
+      Write-Warning "$cred was kept as it was, without this token; store it with: flowz login downloads"
+    }
+  } else {
+    [IO.File]::WriteAllText($cred, (@{ registry = $package; token = $env:FLOWZ_TOKEN } | ConvertTo-Json))
+  }
 } finally {
   Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }
