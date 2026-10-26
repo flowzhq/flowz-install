@@ -55,8 +55,8 @@ function Get-Arch {
 function Write-ArmWarning {
   Write-Warning @"
 Windows on ARM: this build ships WITHOUT the embedded analyzer, because Bun has
-no windows-arm64 compile target (ADR-029). 'flowz model build fsg' and 'init'
-work; 'flowz model build system' will not. Use an amd64 machine or WSL for the full pipeline.
+no windows-arm64 compile target (ADR-029). 'flowz model build fsg', 'init' and
+'view' work; 'flowz model build system' will not. Use an amd64 machine or WSL for the full pipeline.
 "@
 }
 
