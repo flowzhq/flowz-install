@@ -55,8 +55,8 @@ function Get-Arch {
 function Write-ArmWarning {
   Write-Warning @"
 Windows on ARM: this build ships WITHOUT the embedded analyzer, because Bun has
-no windows-arm64 compile target (ADR-029). 'flowz model build fsg' and 'init'
-work; 'flowz model build system' will not. Use an amd64 machine or WSL for the full pipeline.
+no windows-arm64 compile target (ADR-029). 'flowz model build fsg', 'init' and
+'view' work; 'flowz model build system' will not. Use an amd64 machine or WSL for the full pipeline.
 "@
 }
 
@@ -146,6 +146,15 @@ function Install-Binary($src, $name) {
       Start-Sleep -Seconds 1
     }
   }
+}
+
+# Whether flowz.exe exits 0 with $argv, its output discarded; Continue, not
+# Stop, as for its login below.
+function Test-Flowz([string[]]$argv) {
+  $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  try { & $target @argv *> $null; $LASTEXITCODE -eq 0 }
+  catch { $false }
+  finally { $ErrorActionPreference = $eap }
 }
 
 # --- local mode ---------------------------------------------------------------
@@ -324,11 +333,28 @@ try {
 
   # Store the token so `flowz upgrade` works without re-supplying it. The CLI
   # always reads ~\.flowz\credentials.json regardless of where the binary lives.
+  # An existing file may hold more (model registry tokens and CAs, flowz's
+  # Claude sign-in): the new binary stores the token there itself.
   $flowzHome = Join-Path $HOME '.flowz'
   New-Item -ItemType Directory -Force -Path $flowzHome | Out-Null
-  [IO.File]::WriteAllText(
-    (Join-Path $flowzHome 'credentials.json'),
-    (@{ registry = $package; token = $env:FLOWZ_TOKEN } | ConvertTo-Json))
+  $cred = Join-Path $flowzHome 'credentials.json'
+  if ((Test-Path -LiteralPath $cred -PathType Leaf) -and (Get-Item -LiteralPath $cred).Length -gt 0) {
+    # Every flowz exits 0 for `login downloads --help` (an older one prints its
+    # root help), but one before v0.6.0-rc.8 refuses --yes; it stores a token
+    # with `auth login`.
+    $login = if (Test-Flowz @('login', 'downloads', '--yes', '--help')) { @('login', 'downloads', '--yes') } else { @('auth', 'login') }
+    # Continue, not Stop: Windows PowerShell turns a native command's stderr
+    # line into a terminating error under Stop.
+    $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { $loginOut = $env:FLOWZ_TOKEN | & (Join-Path $installDir 'flowz.exe') @login 2>&1; $loginRc = $LASTEXITCODE }
+    finally { $ErrorActionPreference = $eap }
+    if ($loginRc -ne 0) {
+      Write-Host ($loginOut | Out-String)
+      Write-Warning "$cred was kept as it was, without this token; store it with: flowz $($login[0]) $($login[1])"
+    }
+  } else {
+    [IO.File]::WriteAllText($cred, (@{ registry = $package; token = $env:FLOWZ_TOKEN } | ConvertTo-Json))
+  }
 } finally {
   Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }

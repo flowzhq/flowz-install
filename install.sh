@@ -243,13 +243,31 @@ mv -f "$tmpdir/flowz" "$INSTALL_DIR/flowz" || die "could not install to $INSTALL
 
 # Store the token so `flowz upgrade` works without re-supplying it. The CLI
 # always reads ~/.flowz/credentials.json regardless of where the binary lives.
-# Written inside a subshell umask so it is never briefly world-readable.
+# A new file is written inside a subshell umask so it is never briefly
+# world-readable. An existing one may hold more (model registry tokens and
+# CAs, flowz's Claude sign-in): the new binary stores the token there itself.
 mkdir -p "$HOME/.flowz"
-(
-  umask 077
-  printf '{\n  "registry": "%s",\n  "token": "%s"\n}\n' "$PACKAGE" "$FLOWZ_TOKEN" \
-    > "$HOME/.flowz/credentials.json"
-)
+cred="$HOME/.flowz/credentials.json"
+if [ -s "$cred" ]; then
+  # Every flowz exits 0 for `login downloads --help` (an older one prints its
+  # root help), but one before v0.6.0-rc.8 refuses --yes; it stores a token
+  # with `auth login`. Stdin is closed: under `curl | sh` it holds the rest
+  # of this script.
+  if "$INSTALL_DIR/flowz" login downloads --yes --help >/dev/null 2>&1 </dev/null; then
+    set -- login downloads --yes
+  else
+    set -- auth login
+  fi
+  if ! login_out=$(printf '%s\n' "$FLOWZ_TOKEN" | "$INSTALL_DIR/flowz" "$@" 2>&1); then
+    info "$login_out"
+    info "warning: $cred was kept as it was, without this token; store it with: flowz $1 $2"
+  fi
+else
+  (
+    umask 077
+    printf '{\n  "registry": "%s",\n  "token": "%s"\n}\n' "$PACKAGE" "$FLOWZ_TOKEN" > "$cred"
+  )
+fi
 
 info ""
 info "Installed flowz $version to $INSTALL_DIR/flowz"
