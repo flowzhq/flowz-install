@@ -20,11 +20,15 @@ curl -fsSL https://raw.githubusercontent.com/flowzhq/flowz-install/main/install.
 
 ```powershell
 $env:FLOWZ_TOKEN = "<your token>"
+$env:FLOWZ_VERSION = "v1.2.3"   # optional; omit for the latest release
 irm https://raw.githubusercontent.com/flowzhq/flowz-install/main/install.ps1 | iex
 ```
 
 This installs `flowz` to `~/.flowz/bin` and stores your token so that
 `flowz upgrade` works from then on. No `sudo` required.
+
+In PowerShell, quote every value: an unquoted `v1.2.3` is parsed as a
+command, not a string.
 
 ### Options
 
