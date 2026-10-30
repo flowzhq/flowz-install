@@ -1,5 +1,5 @@
 # Flowz CLI installer for Windows (ADR-032). The install command is in
-# docs/partner-install.md. Keep it out of this file: antivirus AMSI scans
+# README.md (install section). Keep it out of this file: antivirus AMSI scans
 # (Bitdefender) block a script that carries a URL piped to iex, comment or not.
 #
 # Downloads the flowz build for this machine from the private registry, verifies
@@ -7,10 +7,11 @@
 # %USERPROFILE%\.flowz\bin. After this, `flowz upgrade` handles every update.
 #
 # Environment:
-#   FLOWZ_TOKEN        (required) the access token you were issued
-#   FLOWZ_VERSION      install this exact version instead of the latest
-#   FLOWZ_INSTALL_DIR  install here instead of ~\.flowz\bin
-#   FLOWZ_CLI_PACKAGE  override the registry package (testing)
+# Set as PowerShell variables, values always quoted, e.g. $env:FLOWZ_VERSION = '0.6.0':
+#   $env:FLOWZ_TOKEN        (required) the access token you were issued
+#   $env:FLOWZ_VERSION      install this exact version instead of the latest
+#   $env:FLOWZ_INSTALL_DIR  install here instead of ~\.flowz\bin
+#   $env:FLOWZ_CLI_PACKAGE  override the registry package (testing)
 #
 # Local mode (offline bundles): with flowz_<version>_windows_<arch>.exe (or
 # flowz.exe) and a SHA256SUMS file beside this script, it verifies the binary
@@ -19,8 +20,8 @@
 # `irm | iex` (which has no script directory):
 #   powershell -ExecutionPolicy Bypass -File .\install.ps1
 #   -Local             require local mode (fail if no binary or SHA256SUMS is beside the script)
-#   FLOWZ_LOCAL=0      never use local mode
-#   FLOWZ_BINARY=<p>   install this binary; SHA256SUMS is read from its directory
+#   $env:FLOWZ_LOCAL = '0'      never use local mode
+#   $env:FLOWZ_BINARY = '<p>'   install this binary; SHA256SUMS is read from its directory
 #
 # flowz-install-script (marker: local mode trusts only a script path that carries this line)
 #
